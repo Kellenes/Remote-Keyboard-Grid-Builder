@@ -77,7 +77,10 @@ public sealed class MainForm : Form
         MinimumSize = new Size(760, 560);
         StartPosition = FormStartPosition.CenterScreen;
 
-        _keyCombo.Items.AddRange(HtmlBuilder.KnownKeys.Cast<object>().ToArray());
+        _keyCombo.Items.AddRange(HtmlBuilder.KnownKeys
+            .Select(code => new KeyOption(code))
+            .OrderBy(option => option.ToString(), StringComparer.OrdinalIgnoreCase)
+            .ToArray());
 
         BuildUi();
         WireEvents();
@@ -183,11 +186,16 @@ public sealed class MainForm : Form
         _keyCombo.TextChanged += (_, _) =>
         {
             if (_updatingUi || _selectedCell == null) return;
-            _selectedCell.Key = _keyCombo.Text;
+            string text = _keyCombo.Text;
+            int index = _keyCombo.FindStringExact(text);
+            var option = index >= 0 ? _keyCombo.Items[index] as KeyOption : null;
+            _selectedCell.Key = option?.Code ?? text;
 
             // Convenience: a cell with an empty label gets the key name as its label
             if (string.IsNullOrWhiteSpace(_labelBox.Text))
-                _labelBox.Text = _keyCombo.Text; // raises _labelBox.TextChanged, which rebuilds the preview
+                _labelBox.Text = option?.Name ?? text; // raises _labelBox.TextChanged
+            else
+                RebuildPreview(); // refresh the key tooltip
         };
 
         _weightBox.ValueChanged += (_, _) =>
@@ -271,7 +279,10 @@ public sealed class MainForm : Form
         {
             _propsPanel.Enabled = _selectedCell != null;
             _labelBox.Text = _selectedCell?.Label ?? "";
-            _keyCombo.Text = _selectedCell?.Key ?? "";
+            string code = _selectedCell?.Key ?? "";
+            var option = _keyCombo.Items.OfType<KeyOption>()
+                .FirstOrDefault(item => string.Equals(item.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
+            _keyCombo.Text = option?.ToString() ?? code;
             _weightBox.Value = _selectedCell?.Weight ?? 1;
             _spacerCheck.Checked = _selectedCell?.IsSpacer ?? false;
 
