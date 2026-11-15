@@ -1,4 +1,5 @@
 using System.Text;
+using InputSimulatorStandard.Native;
 
 namespace RemoteKeyboarGridBuilder;
 
@@ -16,6 +17,7 @@ public sealed class MainForm : Form
 
     // True while we fill the property controls from code, so their change events are ignored
     private bool _updatingUi;
+    private bool _capturingKey;
 
     private readonly TextBox _nameBox = new() { Text = "Classic", Width = 220 };
     private readonly CheckBox _textInputCheck = new() { Text = "Text input line", Checked = true, AutoSize = true };
@@ -54,6 +56,13 @@ public sealed class MainForm : Form
         DropDownStyle = ComboBoxStyle.DropDown,
         AutoCompleteMode = AutoCompleteMode.SuggestAppend,
         AutoCompleteSource = AutoCompleteSource.ListItems
+    };
+
+    private readonly Button _captureKeyButton = new()
+    {
+        Text = "Press a key...",
+        Width = 264,
+        Height = 28
     };
 
     private readonly NumericUpDown _weightBox = new()
@@ -145,6 +154,7 @@ public sealed class MainForm : Form
         _propsPanel.Controls.Add(_labelBox);
         _propsPanel.Controls.Add(Caption("Key (VirtualKeyCode name, you can type to search)"));
         _propsPanel.Controls.Add(_keyCombo);
+        _propsPanel.Controls.Add(_captureKeyButton);
         _propsPanel.Controls.Add(Caption("Width weight (1-4)"));
         _propsPanel.Controls.Add(_weightBox);
         _spacerCheck.Margin = new Padding(3, 8, 3, 3);
@@ -173,6 +183,10 @@ public sealed class MainForm : Form
 
     private void WireEvents()
     {
+        _captureKeyButton.Click += (_, _) => SetKeyCapture(!_capturingKey);
+        _captureKeyButton.Leave += (_, _) => SetKeyCapture(false);
+        Deactivate += (_, _) => SetKeyCapture(false);
+
         // The fake text line in the preview depends on this checkbox
         _textInputCheck.CheckedChanged += (_, _) => RebuildPreview();
 
@@ -189,13 +203,7 @@ public sealed class MainForm : Form
             string text = _keyCombo.Text;
             int index = _keyCombo.FindStringExact(text);
             var option = index >= 0 ? _keyCombo.Items[index] as KeyOption : null;
-            _selectedCell.Key = option?.Code ?? text;
-
-            // Convenience: a cell with an empty label gets the key name as its label
-            if (string.IsNullOrWhiteSpace(_labelBox.Text))
-                _labelBox.Text = option?.Name ?? text; // raises _labelBox.TextChanged
-            else
-                RebuildPreview(); // refresh the key tooltip
+            SetCellKey(_selectedCell, option?.Code ?? text, option?.Name ?? text);
         };
 
         _weightBox.ValueChanged += (_, _) =>
@@ -212,6 +220,53 @@ public sealed class MainForm : Form
             LoadProps(); // enables or disables the label and key controls
             RebuildPreview();
         };
+    }
+
+    private void SetKeyCapture(bool active)
+    {
+        _capturingKey = active;
+        _captureKeyButton.Text = active ? "Waiting for a key..." : "Press a key...";
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (!_capturingKey || _selectedCell is not { IsSpacer: false } cell)
+            return base.ProcessCmdKey(ref msg, keyData);
+
+        int flags = unchecked((int)msg.LParam.ToInt64());
+        // Ignore auto-repeat from a key that was already held down.
+        if ((flags & (1 << 30)) != 0)
+            return true;
+
+        bool extended = (flags & (1 << 24)) != 0;
+        int scanCode = (flags >> 16) & 0xff;
+        // Windows reports generic modifiers here. The scan code and extended bit identify the side.
+        Keys key = (keyData & Keys.KeyCode) switch
+        {
+            Keys.ShiftKey => scanCode == 0x36 ? Keys.RShiftKey : Keys.LShiftKey,
+            Keys.ControlKey => extended ? Keys.RControlKey : Keys.LControlKey,
+            Keys.Menu => extended ? Keys.RMenu : Keys.LMenu,
+            var pressed => pressed
+        };
+
+        string? code = Enum.GetName((VirtualKeyCode)key);
+        if (code == null)
+            return true;
+
+        var option = new KeyOption(code);
+        SetKeyCapture(false);
+        SetCellKey(cell, option.Code, option.Name);
+        LoadProps();
+        return true;
+    }
+
+    private void SetCellKey(KeyCell cell, string code, string name)
+    {
+        cell.Key = code;
+        if (string.IsNullOrWhiteSpace(cell.Label) && _labelBox.Text != name)
+            _labelBox.Text = name; // TextChanged updates the model and preview.
+        else
+            RebuildPreview();
     }
 
     private static Label Header(string text) => new()
@@ -254,9 +309,7 @@ public sealed class MainForm : Form
     // The layout of the original index.html, so there is something to look at and edit right away
     private void SeedClassicLayout()
     {
-        AddRowToModel(MakeKey("Insert", "INSERT"), MakeKey("Home", "HOME"));
         AddRowToModel(MakeKey("Alt", "MENU"), MakeKey("Tab", "TAB"), MakeKey("Esc", "ESCAPE"));
-        AddRowToModel(MakeKey("Shift", "SHIFT"), MakeKey("⌫ Back", "BACK"), MakeKey("⏎ Enter", "RETURN"));
         AddRowToModel(MakeSpacer(), MakeKey("▲", "UP"), MakeSpacer());
         AddRowToModel(MakeKey("◀", "LEFT"), MakeKey("▼", "DOWN"), MakeKey("▶", "RIGHT"));
     }
@@ -265,6 +318,7 @@ public sealed class MainForm : Form
 
     private void SelectCell(KeyRow? row, KeyCell? cell)
     {
+        SetKeyCapture(false);
         _selectedRow = row;
         _selectedCell = cell;
         LoadProps();
@@ -289,6 +343,7 @@ public sealed class MainForm : Form
             // A spacer has neither a label nor a key
             _labelBox.Enabled = !_spacerCheck.Checked;
             _keyCombo.Enabled = !_spacerCheck.Checked;
+            _captureKeyButton.Enabled = !_spacerCheck.Checked;
         }
         finally
         {
