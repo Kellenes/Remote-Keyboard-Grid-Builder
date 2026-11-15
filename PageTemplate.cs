@@ -1,0 +1,294 @@
+namespace RemoteKeyboarGridBuilder;
+
+// The static part of every generated page: CSS and script.
+// Placeholders look like %%NAME%% and are replaced in HtmlBuilder in a single pass.
+// This is a raw string literal, so curly braces and quotes inside need no escaping.
+public static class PageTemplate
+{
+    public const string Html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <!-- Marker: the app recognizes layout pages by it. The number is the protocol version. -->
+            <meta name="kc-layout" content="1">
+            <title>%%TITLE%%</title>
+            <style>
+                * {
+                    box-sizing: border-box;
+                    -webkit-touch-callout: none;
+                    -webkit-user-select: none;
+                    user-select: none;
+                    touch-action: manipulation;
+                }
+
+                body {
+                    margin: 0;
+                    padding: 16px;
+                    background-color: #121214;
+                    color: #e1e1e6;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    min-height: 100vh;
+                }
+
+                #status-bar {
+                    margin-bottom: 16px;
+                    font-size: 13px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .indicator {
+                    width: 9px;
+                    height: 9px;
+                    border-radius: 50%;
+                    background: #e53e3e;
+                }
+
+                .indicator.connected {
+                    background: #38a169;
+                    box-shadow: 0 0 8px #38a169;
+                }
+
+                .container {
+                    width: 100%;
+                    max-width: 340px;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+
+                /* The dropdown with other layouts; it stays hidden until the list is loaded */
+                #layout-select {
+                    width: 100%;
+                    padding: 12px 14px;
+                    background: #202024;
+                    border: 2px solid #323238;
+                    border-radius: 10px;
+                    color: #fff;
+                    font-size: 15px;
+                    outline: none;
+                }
+
+                #layout-select[hidden] {
+                    display: none;
+                }
+
+                .text-box-container {
+                    display: flex;
+                    gap: 8px;
+                    width: 100%;
+                }
+
+                #text-input {
+                    flex: 1;
+                    min-width: 0;
+                    padding: 12px 14px;
+                    background: #202024;
+                    border: 2px solid #323238;
+                    border-radius: 10px;
+                    color: #fff;
+                    font-size: 15px;
+                    outline: none;
+                    -webkit-user-select: text;
+                    user-select: text;
+                }
+
+                #text-input:focus {
+                    border-color: #00b37e;
+                }
+
+                .send-btn {
+                    padding: 0 16px;
+                    background: #00875f;
+                    color: #fff;
+                    border: none;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    cursor: pointer;
+                }
+
+                .grid {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                    width: 100%;
+                }
+
+                .row {
+                    display: flex;
+                    gap: 8px;
+                    justify-content: center;
+                    width: 100%;
+                }
+
+                button.key {
+                    flex: 1;
+                    min-width: 0;
+                    height: 52px;
+                    background: #202024;
+                    color: #e1e1e6;
+                    border: 2px solid #323238;
+                    border-radius: 10px;
+                    font-size: 14px;
+                    font-weight: 600;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    box-shadow: 0 3px #121214;
+                    transition: background 0.05s, transform 0.05s;
+                }
+
+                button.key:active, button.key.active {
+                    background: #00875f;
+                    border-color: #00b37e;
+                    transform: translateY(2px);
+                    box-shadow: 0 1px #121214;
+                }
+
+                .empty {
+                    flex: 1;
+                    height: 52px;
+                    visibility: hidden;
+                }
+            </style>
+        </head>
+        <body>
+            <div id="status-bar">
+                <div id="dot" class="indicator"></div>
+                <span id="status-text">Connecting...</span>
+            </div>
+
+            <div class="container">
+                <select id="layout-select" hidden></select>
+        %%TEXT_INPUT%%
+                <div class="grid">
+        %%ROWS%%
+                </div>
+            </div>
+
+            <script>
+                const dot = document.getElementById('dot');
+                const statusText = document.getElementById('status-text');
+
+                const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                // location.search carries the access token (?token=...) when the app requires one
+                const wsUrl = `${wsProtocol}//${location.host}/ws${location.search}`;
+
+                let ws;
+
+                function connect() {
+                    ws = new WebSocket(wsUrl);
+                    ws.onopen = () => {
+                        dot.classList.add('connected');
+                        statusText.innerText = 'Connected to PC';
+                    };
+                    ws.onclose = () => {
+                        dot.classList.remove('connected');
+                        statusText.innerText = 'Connection lost. Reconnecting...';
+                        setTimeout(connect, 1500);
+                    };
+                    ws.onerror = () => ws.close();
+                }
+
+                connect();
+
+                function sendCommand(action, key) {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ action, key }));
+                    }
+                }
+
+                // The text line exists in the page only if it was enabled in the editor
+                const textForm = document.getElementById('text-form');
+                if (textForm) {
+                    const textInput = document.getElementById('text-input');
+                    textForm.addEventListener('submit', (e) => {
+                        e.preventDefault();
+                        const val = textInput.value;
+                        if (!val) return;
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ action: 'text', value: val }));
+                            textInput.value = '';
+                        }
+                    });
+                }
+
+                document.querySelectorAll('.key').forEach(button => {
+                    const key = button.getAttribute('data-key');
+                    const handleDown = (e) => {
+                        e.preventDefault();
+                        button.classList.add('active');
+                        sendCommand('down', key);
+                    };
+                    const handleUp = (e) => {
+                        e.preventDefault();
+                        button.classList.remove('active');
+                        sendCommand('up', key);
+                    };
+
+                    button.addEventListener('touchstart', handleDown, { passive: false });
+                    button.addEventListener('touchend', handleUp, { passive: false });
+                    button.addEventListener('touchcancel', handleUp, { passive: false });
+                    button.addEventListener('mousedown', handleDown);
+                    button.addEventListener('mouseup', handleUp);
+                    button.addEventListener('mouseleave', handleUp);
+                });
+
+                // Fills the dropdown with the layouts the app reports. Any failure just leaves it hidden.
+                async function loadLayouts() {
+                    const select = document.getElementById('layout-select');
+                    try {
+                        const response = await fetch('/api/layouts' + location.search, { cache: 'no-store' });
+                        // The endpoint may be missing (older app version): the page works without the dropdown
+                        if (!response.ok) return;
+
+                        const layouts = await response.json();
+                        if (!Array.isArray(layouts) || layouts.length === 0) return;
+
+                        const current = decodeURIComponent(location.pathname.split('/').pop() || '');
+                        let matched = false;
+
+                        for (const item of layouts) {
+                            const option = document.createElement('option');
+                            option.value = item.file;
+                            // textContent, never innerHTML: names come from file names
+                            option.textContent = item.name;
+                            if (item.file === current) {
+                                option.selected = true;
+                                matched = true;
+                            }
+                            select.appendChild(option);
+                        }
+
+                        if (!matched) {
+                            // Opened as "/": no entry matches, so show a neutral first item
+                            const placeholder = document.createElement('option');
+                            placeholder.textContent = 'Choose layout...';
+                            placeholder.disabled = true;
+                            placeholder.selected = true;
+                            select.insertBefore(placeholder, select.firstChild);
+                        }
+
+                        select.addEventListener('change', () => {
+                            // A relative address keeps the same host; the token is carried over
+                            location.href = encodeURIComponent(select.value) + location.search;
+                        });
+                        select.hidden = false;
+                    } catch (e) {
+                        // No endpoint or no network: ignore
+                    }
+                }
+
+                loadLayouts();
+            </script>
+        </body>
+        </html>
+        """;
+}
